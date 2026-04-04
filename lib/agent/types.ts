@@ -1,6 +1,7 @@
 export type ThinkingStep = {
   type: "thinking";
   text: string;
+  sources?: string[];
   timestamp: string;
 };
 
@@ -13,9 +14,11 @@ export type FetchStep = {
 
 export type ExtractStep = {
   type: "extract";
+  id: string;
   url: string;
-  found: string[];
-  missing: string[];
+  section_title: string;
+  excerpt: string;
+  relevance: string;
   timestamp: string;
 };
 
@@ -40,9 +43,20 @@ export type Findings = {
   recommendation: string;
 };
 
+export type SourceRange = {
+  start: number; // 1-based, inclusive
+  end: number; // 1-based, inclusive
+  extractId: string;
+};
+
+export type ArtifactKind = "code" | "command";
+
 export type CodeBlock = {
+  kind: ArtifactKind;
   language: string;
   code: string;
+  extracts: ExtractStep[];
+  sourceRanges: SourceRange[];
 };
 
 export type SSEStepEvent =

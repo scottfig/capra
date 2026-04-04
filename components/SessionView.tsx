@@ -2,17 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "@/lib/db/schema";
-import type { CodeBlock, Findings, TraceStep } from "@/lib/agent/types";
+import type { CodeBlock, TraceStep } from "@/lib/agent/types";
 import AgentTrace from "./AgentTrace";
 import CodeOutput from "./CodeOutput";
-import FindingsPanel from "./FindingsPanel";
 import ShareButton from "./ShareButton";
 
 interface Props {
   session: Session;
 }
-
-type ActiveTab = "code" | "findings";
 
 export default function SessionView({ session }: Props) {
   const [steps, setSteps] = useState<TraceStep[]>(
@@ -21,54 +18,46 @@ export default function SessionView({ session }: Props) {
   const [codeBlocks, setCodeBlocks] = useState<CodeBlock[]>(
     (session.code_output as CodeBlock[]) ?? []
   );
-  const [findings, setFindings] = useState<Findings | null>(
-    (session.findings as Findings) ?? null
-  );
   const [status, setStatus] = useState(session.status);
   const [partialText, setPartialText] = useState("");
-  const [activeTab, setActiveTab] = useState<ActiveTab>("code");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [fetchCount, setFetchCount] = useState(
-    (session.trace as TraceStep[] | null)?.filter((s) => s.type === "fetch")
-      .length ?? 0
-  );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const traceEndRef = useRef<HTMLDivElement>(null);
+  const fetchCount = steps.filter((step) => step.type === "fetch").length;
 
   useEffect(() => {
     if (session.status !== "running") return;
 
-    const eventSource = new EventSource(
-      `/api/sessions/${session.id}/stream`
-    );
+    const eventSource = new EventSource(`/api/sessions/${session.id}/stream`);
 
     eventSource.addEventListener("step", (e) => {
-      const step = JSON.parse(e.data) as TraceStep;
-      setSteps((prev) => [...prev, step]);
-      setPartialText("");
-      if (step.type === "fetch") {
-        setFetchCount((n) => n + 1);
-      }
+      try {
+        const step = JSON.parse(e.data) as TraceStep;
+        setSteps((current) => [...current, step]);
+        setPartialText("");
+      } catch { /* ignore */ }
     });
 
     eventSource.addEventListener("step:partial", (e) => {
-      const { text } = JSON.parse(e.data) as { text: string };
-      setPartialText((prev) => prev + text);
+      try {
+        const { text } = JSON.parse((e as MessageEvent).data) as { text: string };
+        setPartialText(text);
+      } catch {
+        setPartialText("");
+      }
     });
 
     eventSource.addEventListener("complete", async () => {
       eventSource.close();
-      setPartialText("");
       setStatus("complete");
-      // Reload session to get final code_output + findings
       const res = await fetch(`/api/sessions/${session.id}`, {
         headers: { "x-internal": "1" },
       });
       if (res.ok) {
         const updated = await res.json() as Session;
+        setSteps((updated.trace as TraceStep[]) ?? []);
         setCodeBlocks((updated.code_output as CodeBlock[]) ?? []);
-        setFindings((updated.findings as Findings) ?? null);
       }
-      setActiveTab("code");
+      setPartialText("");
     });
 
     eventSource.addEventListener("error", (e) => {
@@ -86,98 +75,89 @@ export default function SessionView({ session }: Props) {
     return () => eventSource.close();
   }, [session.id, session.status]);
 
-  // Auto-scroll trace panel
   useEffect(() => {
     traceEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [steps, partialText]);
 
-  const isLive = status === "running";
-
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-screen bg-zinc-950">
       {/* Header */}
-      <div className="border-b border-zinc-800 px-6 py-4 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold text-white truncate">
-              {session.domain}
-            </h1>
-            {isLive && (
-              <span className="flex items-center gap-1.5 text-xs text-green-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                Running
-              </span>
-            )}
-            {status === "failed" && (
-              <span className="text-xs text-red-400">Failed</span>
-            )}
-          </div>
-          <p className="text-sm text-zinc-400 mt-0.5 line-clamp-2">
-            {session.task}
-          </p>
-          <p className="text-xs text-zinc-600 mt-1">
-            {status === "complete" && session.completed_at
-              ? `Completed · ${fetchCount} fetches`
-              : isLive
-              ? `${fetchCount} fetches so far...`
-              : ""}
-          </p>
+      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="font-mono text-sm text-zinc-400">{session.domain}</span>
+          <span className="text-zinc-700">·</span>
+          <span className="text-sm text-zinc-300 truncate">{session.task}</span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
+          {status === "running" && (
+            <span className="flex items-center gap-1.5 text-xs text-green-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              Running
+            </span>
+          )}
+          {status === "complete" && (
+            <span className="text-xs text-zinc-500">Complete</span>
+          )}
+          {status === "failed" && (
+            <span className="text-xs text-red-400">Failed</span>
+          )}
           <ShareButton sessionId={session.id} isPublic={session.is_public} />
-          <button
-            onClick={() =>
-              navigator.clipboard.writeText(window.location.href)
-            }
-            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors"
-          >
-            Copy
-          </button>
         </div>
       </div>
 
-      {errorMessage && (
-        <div className="mx-6 mt-4 rounded-lg border border-red-800 bg-red-950/50 px-4 py-3 text-sm text-red-300">
-          {errorMessage} The partial trace is saved below.
-        </div>
-      )}
-
       {/* Body */}
-      <div className="flex flex-1 min-h-0 divide-x divide-zinc-800">
-        {/* Left: Trace */}
-        <div className="flex-1 min-w-0 overflow-y-auto p-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-4">
-            Agent Trace
-          </h2>
-          <AgentTrace steps={steps} partialText={partialText} isLive={isLive} />
-          <div ref={traceEndRef} />
+      <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
+        <div className="flex min-h-0 flex-1 flex-col border-b border-zinc-800 lg:border-b-0 lg:border-r">
+          <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+            <div>
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                Agent Trace
+              </h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                {status === "complete"
+                  ? `${fetchCount} page${fetchCount === 1 ? "" : "s"} fetched`
+                  : status === "running"
+                  ? `${fetchCount} page${fetchCount === 1 ? "" : "s"} fetched so far`
+                  : "Trace captured until failure"}
+              </p>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">
+            {errorMessage ? (
+              <div className="mb-4 rounded-lg border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-300">
+                {errorMessage}
+              </div>
+            ) : null}
+            <AgentTrace
+              steps={steps}
+              partialText={partialText}
+              isLive={status === "running"}
+            />
+            <div ref={traceEndRef} />
+          </div>
         </div>
 
-        {/* Right: Code + Findings */}
-        <div className="w-[480px] shrink-0 flex flex-col min-h-0">
-          {/* Tabs */}
-          <div className="flex border-b border-zinc-800">
-            {(["code", "findings"] as ActiveTab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-                  activeTab === tab
-                    ? "text-white border-b-2 border-white -mb-px"
-                    : "text-zinc-500 hover:text-zinc-300"
-                }`}
-              >
-                {tab === "code" ? "Code Output" : "Findings"}
-              </button>
-            ))}
+        <div className="flex min-h-0 w-full flex-col lg:w-[52%] lg:min-w-[420px] lg:max-w-[760px]">
+          <div className="border-b border-zinc-800 px-6 py-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+              Output Artifact
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Documentation-grounded lines are highlighted. Unhighlighted lines are model-generated synthesis.
+            </p>
           </div>
-
-          <div className="flex-1 overflow-y-auto p-6">
-            {activeTab === "code" ? (
-              <CodeOutput blocks={codeBlocks} />
-            ) : (
-              <FindingsPanel findings={findings} />
-            )}
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">
+            {status === "running" && codeBlocks.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3">
+                <div className="h-6 w-6 rounded-full border-2 border-zinc-700 border-t-zinc-400 animate-spin" />
+                <p className="text-sm text-zinc-500">
+                  {fetchCount > 0
+                    ? "Reading the docs and assembling the artifact..."
+                    : "Agent is starting..."}
+                </p>
+              </div>
+            ) : null}
+            {codeBlocks.length > 0 ? <CodeOutput blocks={codeBlocks} /> : null}
           </div>
         </div>
       </div>

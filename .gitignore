@@ -33,6 +33,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.claude
+.codex
 
 # typescript
 *.tsbuildinfo

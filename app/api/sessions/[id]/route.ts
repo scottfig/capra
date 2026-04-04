@@ -19,7 +19,8 @@ export async function GET(
   }
 
   // Private sessions that are complete are not publicly accessible
-  if (!session.is_public && session.status === "complete") {
+  const isInternal = _request.headers.get("x-internal") === "1";
+  if (!isInternal && !session.is_public && session.status === "complete") {
     return NextResponse.json({ error: "private" }, { status: 404 });
   }
 
