@@ -22,6 +22,12 @@ export default function SessionView({ session }: Props) {
   const [partialText, setPartialText] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showHighlights, setShowHighlights] = useState(true);
+  const [traceWidth, setTraceWidth] = useState(48);
+  const isDragging = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const tracePanelRef = useRef<HTMLDivElement>(null);
+  const outputPanelRef = useRef<HTMLDivElement>(null);
+  const [isLg, setIsLg] = useState(false);
   const traceEndRef = useRef<HTMLDivElement>(null);
   const fetchCount = steps.filter((step) => step.type === "fetch").length;
 
@@ -80,6 +86,38 @@ export default function SessionView({ session }: Props) {
     traceEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [steps, partialText]);
 
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    setIsLg(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsLg(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const pct = Math.min(Math.max(((e.clientX - rect.left) / rect.width) * 100, 20), 80);
+      // Mutate DOM directly — no React re-render during drag
+      if (tracePanelRef.current) tracePanelRef.current.style.width = `${pct}%`;
+      if (outputPanelRef.current) outputPanelRef.current.style.width = `${100 - pct}%`;
+    }
+    function onMouseUp(e: MouseEvent) {
+      if (!isDragging.current || !containerRef.current) return;
+      isDragging.current = false;
+      const rect = containerRef.current.getBoundingClientRect();
+      const pct = Math.min(Math.max(((e.clientX - rect.left) / rect.width) * 100, 20), 80);
+      setTraceWidth(pct); // commit to React state once on release
+    }
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-zinc-950">
       {/* Header */}
@@ -107,8 +145,12 @@ export default function SessionView({ session }: Props) {
       </div>
 
       {/* Body */}
-      <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
-        <div className="flex min-h-0 flex-1 flex-col border-b border-zinc-800 lg:border-b-0 lg:border-r">
+      <div ref={containerRef} className="flex flex-1 min-h-0 flex-col lg:flex-row">
+        <div
+          ref={tracePanelRef}
+          className="flex min-h-0 flex-col border-b border-zinc-800 lg:border-b-0 w-full"
+          style={isLg ? { width: `${traceWidth}%` } : undefined}
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
             <div>
               <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -138,7 +180,23 @@ export default function SessionView({ session }: Props) {
           </div>
         </div>
 
-        <div className="flex min-h-0 w-full flex-col lg:w-[52%] lg:min-w-[420px] lg:max-w-[760px]">
+        {/* Draggable divider — desktop only */}
+        <div
+          className="hidden lg:flex items-center justify-center w-1 shrink-0 bg-zinc-800 hover:bg-zinc-600 cursor-col-resize transition-colors select-none group"
+          onMouseDown={(e) => { e.preventDefault(); isDragging.current = true; }}
+        >
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-[3px]">
+            <span className="w-[3px] h-[3px] rounded-full bg-zinc-400" />
+            <span className="w-[3px] h-[3px] rounded-full bg-zinc-400" />
+            <span className="w-[3px] h-[3px] rounded-full bg-zinc-400" />
+          </div>
+        </div>
+
+        <div
+          ref={outputPanelRef}
+          className="flex min-h-0 flex-col w-full"
+          style={isLg ? { width: `${100 - traceWidth}%` } : undefined}
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
               Output
