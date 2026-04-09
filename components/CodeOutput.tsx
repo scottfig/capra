@@ -65,11 +65,6 @@ export default function CodeOutput({ blocks }: Props) {
     blockIndex: number;
     colorIndex: number;
   } | null>(null);
-  const [hoveredEntry, setHoveredEntry] = useState<{
-    extractId: string;
-    blockIndex: number;
-    colorIndex: number;
-  } | null>(null);
 
   if (blocks.length === 0) {
     return <p className="text-sm text-zinc-500 italic">No artifact output yet.</p>;
@@ -98,7 +93,7 @@ export default function CodeOutput({ blocks }: Props) {
           </span>
         </div>
         <p className="mt-2 text-sm text-zinc-500">
-          Hover highlighted lines to preview the supporting excerpt. Click a highlighted range to pin its source.
+          Click a highlighted range to view its source.
         </p>
       </div>
       {blocks.map((block, i) => {
@@ -127,15 +122,6 @@ export default function CodeOutput({ blocks }: Props) {
         const activeExtract = activeForThisBlock
           ? extractsMap.get(activeForThisBlock.extractId)
           : null;
-
-        const hoveredForThisBlock =
-          hoveredEntry?.blockIndex === i ? hoveredEntry : null;
-        // Only show hover card if not already pinned to the same extract
-        const hoverExtract =
-          hoveredForThisBlock &&
-          hoveredForThisBlock.extractId !== activeForThisBlock?.extractId
-            ? extractsMap.get(hoveredForThisBlock.extractId)
-            : null;
 
         return (
           <div
@@ -171,15 +157,10 @@ export default function CodeOutput({ blocks }: Props) {
               lineNumberStyle={{ display: "none" }}
               lineProps={(lineNumber) => {
                 const entry = lineMap.get(lineNumber);
-                if (!entry) return {
-                  style: { display: "block" },
-                  onMouseEnter: () => setHoveredEntry(null),
-                };
+                if (!entry) return { style: { display: "block" } };
                 const palette = PALETTE[entry.colorIndex];
                 const isActive =
                   activeForThisBlock?.extractId === entry.extractId;
-                const isHovered =
-                  hoveredForThisBlock?.extractId === entry.extractId;
                 return {
                   style: {
                     display: "block",
@@ -187,8 +168,6 @@ export default function CodeOutput({ blocks }: Props) {
                     borderLeft: `2px solid ${isActive ? palette.borderActive : palette.border}`,
                     cursor: "pointer",
                     transition: "background-color 0.1s",
-                    outline: isHovered && !isActive ? `1px solid ${palette.borderActive}` : undefined,
-                    outlineOffset: "-1px",
                   },
                   onClick: () =>
                     setActiveEntry(
@@ -200,13 +179,6 @@ export default function CodeOutput({ blocks }: Props) {
                             colorIndex: entry.colorIndex,
                           }
                     ),
-                  onMouseEnter: () =>
-                    setHoveredEntry({
-                      extractId: entry.extractId,
-                      blockIndex: i,
-                      colorIndex: entry.colorIndex,
-                    }),
-                  onMouseLeave: () => setHoveredEntry(null),
                 };
               }}
               customStyle={{
@@ -219,35 +191,7 @@ export default function CodeOutput({ blocks }: Props) {
               {block.code}
             </SyntaxHighlighter>
 
-            {/* Hover preview panel */}
-            {hoverExtract && hoveredForThisBlock && (
-              <div className="border-t border-zinc-700/60 bg-zinc-900/40 p-3 space-y-2 pointer-events-none">
-                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-                  Source preview
-                </span>
-                <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: PALETTE[hoveredForThisBlock.colorIndex].dot }}
-                      />
-                      <span className="text-xs font-semibold text-zinc-200 leading-snug truncate">
-                        {hoverExtract.section_title}
-                      </span>
-                    </div>
-                    <span className="text-xs text-zinc-500 font-mono shrink-0">
-                      click to pin
-                    </span>
-                  </div>
-                  <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2">
-                    {hoverExtract.excerpt}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Source panel for the active (pinned) line */}
+            {/* Source panel for the active (clicked) range */}
             {activeExtract && activeForThisBlock && (
               <div className="border-t border-zinc-700/60 bg-zinc-900/40 p-3 space-y-2">
                 <div className="flex items-center justify-between mb-1">

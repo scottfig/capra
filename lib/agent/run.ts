@@ -17,11 +17,16 @@ export function normalizeDomain(input: string): string {
     .trim();
 }
 
+function isStructuralLine(line: string): boolean {
+  return /^[\s{}()\[\];,]*$/.test(line);
+}
+
 function parseSourceMap(
   raw: string,
-  lineCount: number,
+  codeLines: string[],
   extractsById: Map<string, ExtractStep>
 ): SourceRange[] {
+  const lineCount = codeLines.length;
   return raw
     .trim()
     .split("\n")
@@ -45,7 +50,15 @@ function parseSourceMap(
         .split(",")
         .map((s) => s.trim())
         .filter((s) => /^ext_\d+$/.test(s) && extractsById.has(s));
-      return ids.map((extractId) => ({ start, end: boundedEnd, extractId }));
+      const ranges: SourceRange[] = [];
+      for (const extractId of ids) {
+        for (let ln = start; ln <= boundedEnd; ln++) {
+          if (!isStructuralLine(codeLines[ln - 1])) {
+            ranges.push({ start: ln, end: ln, extractId });
+          }
+        }
+      }
+      return ranges;
     });
 }
 
@@ -80,8 +93,8 @@ function parseCodeBlocks(
   for (const m of normalized.matchAll(pattern)) {
     const code = m[2].trim();
     const language = (m[1] || "text").toLowerCase();
-    const lineCount = code === "" ? 0 : code.split("\n").length;
-    const sourceRanges = parseSourceMap(m[3] ?? "", lineCount, extractsById);
+    const codeLines = code === "" ? [] : code.split("\n");
+    const sourceRanges = parseSourceMap(m[3] ?? "", codeLines, extractsById);
     const referencedExtractIds = new Set(sourceRanges.map((range) => range.extractId));
     blocks.push({
       kind: SHELL_LANGUAGES.has(language) ? "command" : "code",
