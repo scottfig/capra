@@ -3,10 +3,11 @@
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import type { CodeBlock, ExtractStep } from "@/lib/agent/types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Props {
   blocks: CodeBlock[];
+  showHighlights: boolean;
 }
 
 const PALETTE = [
@@ -58,13 +59,17 @@ function SourceCard({ extract, dot }: { extract: ExtractStep; dot: string }) {
   );
 }
 
-export default function CodeOutput({ blocks }: Props) {
+export default function CodeOutput({ blocks, showHighlights }: Props) {
   const [copied, setCopied] = useState<number | null>(null);
   const [activeEntry, setActiveEntry] = useState<{
     extractId: string;
     blockIndex: number;
     colorIndex: number;
   } | null>(null);
+
+  useEffect(() => {
+    setActiveEntry(null);
+  }, [showHighlights]);
 
   if (blocks.length === 0) {
     return <p className="text-sm text-zinc-500 italic">No artifact output yet.</p>;
@@ -78,24 +83,6 @@ export default function CodeOutput({ blocks }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-            Provenance
-          </span>
-          <span className="inline-flex items-center gap-2 text-xs text-zinc-300">
-            <span className="h-3 w-3 rounded-sm border border-blue-400/60 bg-blue-500/15" />
-            Documentation-grounded
-          </span>
-          <span className="inline-flex items-center gap-2 text-xs text-zinc-400">
-            <span className="h-3 w-3 rounded-sm border border-zinc-700 bg-zinc-800/70" />
-            Uncited synthesis
-          </span>
-        </div>
-        <p className="mt-2 text-sm text-zinc-500">
-          Click a highlighted range to view its source.
-        </p>
-      </div>
       {blocks.map((block, i) => {
         const hasRanges = block.sourceRanges && block.sourceRanges.length > 0;
 
@@ -157,7 +144,7 @@ export default function CodeOutput({ blocks }: Props) {
               lineNumberStyle={{ display: "none" }}
               lineProps={(lineNumber) => {
                 const entry = lineMap.get(lineNumber);
-                if (!entry) return { style: { display: "block" } };
+                if (!entry || !showHighlights) return { style: { display: "block" } };
                 const palette = PALETTE[entry.colorIndex];
                 const isActive =
                   activeForThisBlock?.extractId === entry.extractId;
@@ -192,7 +179,7 @@ export default function CodeOutput({ blocks }: Props) {
             </SyntaxHighlighter>
 
             {/* Source panel for the active (clicked) range */}
-            {activeExtract && activeForThisBlock && (
+            {showHighlights && activeExtract && activeForThisBlock && (
               <div className="border-t border-zinc-700/60 bg-zinc-900/40 p-3 space-y-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">

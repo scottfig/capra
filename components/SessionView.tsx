@@ -21,6 +21,7 @@ export default function SessionView({ session }: Props) {
   const [status, setStatus] = useState(session.status);
   const [partialText, setPartialText] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showHighlights, setShowHighlights] = useState(true);
   const traceEndRef = useRef<HTMLDivElement>(null);
   const fetchCount = steps.filter((step) => step.type === "fetch").length;
 
@@ -138,13 +139,16 @@ export default function SessionView({ session }: Props) {
         </div>
 
         <div className="flex min-h-0 w-full flex-col lg:w-[52%] lg:min-w-[420px] lg:max-w-[760px]">
-          <div className="border-b border-zinc-800 px-6 py-4">
+          <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-              Output Artifact
+              Output
             </h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              Documentation-grounded lines are highlighted. Unhighlighted lines are model-generated synthesis.
-            </p>
+            <button
+              onClick={() => setShowHighlights(h => !h)}
+              className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              {showHighlights ? "Hide highlights" : "Show highlights"}
+            </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">
             {status === "running" && codeBlocks.length === 0 ? (
@@ -157,7 +161,7 @@ export default function SessionView({ session }: Props) {
                 </p>
               </div>
             ) : null}
-            {codeBlocks.length > 0 ? <CodeOutput blocks={codeBlocks} /> : null}
+            {codeBlocks.length > 0 ? <CodeOutput blocks={codeBlocks} showHighlights={showHighlights} /> : null}
           </div>
         </div>
       </div>
