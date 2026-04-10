@@ -12,23 +12,13 @@ export type FetchStep = {
   timestamp: string;
 };
 
-export type ExtractStep = {
-  type: "extract";
-  id: string;
-  url: string;
-  section_title: string;
-  excerpt: string;
-  relevance: string;
+export type SourcesStep = {
+  type: "sources";
+  urls: string[];
   timestamp: string;
 };
 
-export type ConclusionStep = {
-  type: "conclusion";
-  text: string;
-  timestamp: string;
-};
-
-export type TraceStep = ThinkingStep | FetchStep | ExtractStep | ConclusionStep;
+export type TraceStep = ThinkingStep | FetchStep | SourcesStep;
 
 export type FindingItem = {
   label: string;
@@ -46,7 +36,8 @@ export type Findings = {
 export type SourceRange = {
   start: number; // 1-based, inclusive
   end: number; // 1-based, inclusive
-  extractId: string;
+  sourceUrl: string;
+  excerpt?: string; // verbatim snippet from the source page
 };
 
 export type ArtifactKind = "code" | "command";
@@ -55,7 +46,6 @@ export type CodeBlock = {
   kind: ArtifactKind;
   language: string;
   code: string;
-  extracts: ExtractStep[];
   sourceRanges: SourceRange[];
 };
 

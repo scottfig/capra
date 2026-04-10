@@ -4,7 +4,7 @@ import { sessions } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { buildSystemPrompt, buildUserPrompt } from "./prompts";
 import { fetchPage } from "./fetchPage";
-import type { CodeBlock, ExtractStep, SourceRange, TraceStep } from "./types";
+import type { CodeBlock, SourceRange, SourcesStep, TraceStep } from "./types";
 
 const SHELL_LANGUAGES = new Set(["bash", "sh", "shell", "zsh", "console"]);
 
@@ -21,52 +21,59 @@ function isStructuralLine(line: string): boolean {
   return /^[\s{}()\[\];,]*$/.test(line);
 }
 
-function parseSourceMap(
-  raw: string,
-  codeLines: string[],
-  extractsById: Map<string, ExtractStep>
-): SourceRange[] {
-  const lineCount = codeLines.length;
-  return raw
-    .trim()
-    .split("\n")
-    .flatMap((line) => {
-      // e.g. "3: ext_001" or "5-7: ext_002" or "3: ext_001, ext_002"
-      const m = line.trim().match(/^(\d+)(?:-(\d+))?:\s*(.+)$/);
-      if (!m) return [];
-      const start = Number(m[1]);
-      const end = Number(m[2] ?? m[1]);
-      if (
-        !Number.isInteger(start) ||
-        !Number.isInteger(end) ||
-        start < 1 ||
-        end < start ||
-        start > lineCount
-      ) {
-        return [];
-      }
-      const boundedEnd = Math.min(end, lineCount);
-      const ids = m[3]
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => /^ext_\d+$/.test(s) && extractsById.has(s));
-      const ranges: SourceRange[] = [];
-      for (const extractId of ids) {
-        for (let ln = start; ln <= boundedEnd; ln++) {
-          if (!isStructuralLine(codeLines[ln - 1])) {
-            ranges.push({ start: ln, end: ln, extractId });
-          }
-        }
-      }
-      return ranges;
-    });
+// Lines that clearly start a user-facing summary block — stop processing at these.
+const SUMMARY_TRIGGERS = [
+  /^i have all the information/i,
+  /^now i have all/i,
+  /^i now have (everything|all)/i,
+  /^here'?s? (what i know|my (plan|summary|approach))/i,
+  /^key facts/i,
+  /^setup instructions/i,
+  /^what the code does/i,
+  /^a few important notes/i,
+  /^before (you use|running)/i,
+  /^to use this code/i,
+  /^replace the following/i,
+  /^⚠️/,
+  /^important:/i,
+  /^warning:/i,
+  /^please (note|consult|see)/i,
+  /^how (it|this) works/i,
+  /^does this make sense/i,
+];
+
+// A line with 2+ sentence breaks is reasoning/analysis, not a log entry.
+// Pattern: period/!/? followed by a space and capital letter.
+function isReasoningLine(line: string): boolean {
+  return (line.match(/[.!?]\s+[A-Z]/g) ?? []).length >= 2;
 }
 
 function cleanThinkingText(text: string): string {
-  return text
+  // Strip fenced code blocks and source-map tags
+  let cleaned = text
     .replace(/```[\s\S]*?```/g, "")
     .replace(/<source-map>[\s\S]*?<\/source-map>/g, "")
     .trim();
+
+  // Strip markdown tables (lines starting with |)
+  cleaned = cleaned.replace(/^(\|[^\n]*\n?)+/gm, "").trim();
+
+  const inputLines = cleaned.split("\n");
+  const outputLines: string[] = [];
+
+  for (const line of inputLines) {
+    const trimmed = line.trim();
+
+    // Stop entirely at summary trigger phrases
+    if (SUMMARY_TRIGGERS.some((re) => re.test(trimmed))) break;
+
+    // Drop multi-sentence reasoning lines (but keep blank lines for spacing)
+    if (trimmed && isReasoningLine(trimmed)) continue;
+
+    outputLines.push(line);
+  }
+
+  return outputLines.join("\n").trim();
 }
 
 function sanitizePartialThinking(text: string): string {
@@ -76,34 +83,65 @@ function sanitizePartialThinking(text: string): string {
     .trimStart();
 }
 
-function parseCodeBlocks(
-  text: string,
-  extractsById: Map<string, ExtractStep>
-): CodeBlock[] {
-  // Normalize: if a <source-map> appears before a code fence (any amount of whitespace
-  // between them), move it to immediately after the closing fence.
-  const normalized = text.replace(
-    /(<source-map>[\s\S]*?<\/source-map>)([ \t\n]*)([ \t]*```)/g,
-    "$3\n$1"
-  );
+function parseSourceMap(
+  raw: string,
+  codeLines: string[]
+): SourceRange[] {
+  // Each line: "LINE: URL" or "LINE-LINE: URL" or "LINE: URL | "excerpt""
+  const lineCount = codeLines.length;
+  const ranges: SourceRange[] = [];
+
+  for (const line of raw.trim().split("\n")) {
+    const m = line.trim().match(
+      /^(\d+)(?:-(\d+))?:\s*(https?:\/\/\S+?)(?:\s*\|\s*"(.*?)")?$/
+    );
+    if (!m) continue;
+
+    const start = Number(m[1]);
+    const end = Number(m[2] ?? m[1]);
+    const sourceUrl = m[3];
+    const excerpt = m[4]; // undefined if not present
+
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 1 ||
+      end < start ||
+      start > lineCount
+    ) continue;
+
+    const boundedEnd = Math.min(end, lineCount);
+
+    // Expand range into individual lines, skipping structural ones
+    for (let ln = start; ln <= boundedEnd; ln++) {
+      if (!isStructuralLine(codeLines[ln - 1])) {
+        ranges.push({ start: ln, end: ln, sourceUrl, excerpt });
+      }
+    }
+  }
+
+  return ranges;
+}
+
+function parseCodeBlocks(text: string): CodeBlock[] {
   const pattern =
     /```(\w+)?\n([\s\S]*?)```[ \t\n]*(?:<source-map>([\s\S]*?)<\/source-map>)?/g;
-  const allExtracts = [...extractsById.values()];
   const blocks: CodeBlock[] = [];
-  for (const m of normalized.matchAll(pattern)) {
+
+  for (const m of text.matchAll(pattern)) {
     const code = m[2].trim();
     const language = (m[1] || "text").toLowerCase();
     const codeLines = code === "" ? [] : code.split("\n");
-    const sourceRanges = parseSourceMap(m[3] ?? "", codeLines, extractsById);
-    const referencedExtractIds = new Set(sourceRanges.map((range) => range.extractId));
+    const sourceRanges = parseSourceMap(m[3] ?? "", codeLines);
+
     blocks.push({
       kind: SHELL_LANGUAGES.has(language) ? "command" : "code",
       language,
       code,
-      extracts: allExtracts.filter((extract) => referencedExtractIds.has(extract.id)),
       sourceRanges,
     });
   }
+
   return blocks;
 }
 
@@ -129,31 +167,6 @@ const FETCH_PAGE_TOOL: Anthropic.Tool = {
   },
 };
 
-const RECORD_EXTRACT_TOOL: Anthropic.Tool = {
-  name: "record_extract",
-  description:
-    "Record a specific passage from a documentation page that is directly useful for the task. Call this immediately after fetching a page, once per useful passage. Do not call speculatively — only record text you will actually use.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "The page URL this excerpt comes from" },
-      section_title: {
-        type: "string",
-        description: "The section or heading this excerpt falls under",
-      },
-      excerpt: {
-        type: "string",
-        description: "The verbatim passage from the documentation, up to ~500 characters",
-      },
-      relevance: {
-        type: "string",
-        description: "One sentence: what task element this excerpt directly informs",
-      },
-    },
-    required: ["url", "section_title", "excerpt", "relevance"],
-  },
-};
-
 export async function runAgent(
   sessionId: string,
   domain: string,
@@ -168,8 +181,6 @@ export async function runAgent(
 
   try {
     const fetchedUrls: string[] = [];
-    let extractCounter = 0;
-    const extractsById = new Map<string, ExtractStep>();
     let fullText = "";
     const messages: Anthropic.MessageParam[] = [
       { role: "user", content: buildUserPrompt(domain, task) },
@@ -190,7 +201,7 @@ export async function runAgent(
         max_tokens: 4096,
         system: buildSystemPrompt(),
         messages,
-        tools: [FETCH_PAGE_TOOL, RECORD_EXTRACT_TOOL],
+        tools: [FETCH_PAGE_TOOL],
       });
 
       for await (const event of stream) {
@@ -265,39 +276,22 @@ export async function runAgent(
             content: text,
           });
         }
-
-        if (block.name === "record_extract") {
-          const input = block.input as {
-            url: string;
-            section_title: string;
-            excerpt: string;
-            relevance: string;
-          };
-          extractCounter += 1;
-          const id = `ext_${String(extractCounter).padStart(3, "0")}`;
-          const extractStep: ExtractStep = {
-            type: "extract",
-            id,
-            url: input.url,
-            section_title: input.section_title,
-            excerpt: input.excerpt,
-            relevance: input.relevance,
-            timestamp: new Date().toISOString(),
-          };
-          extractsById.set(id, extractStep);
-          await appendTraceStep(sessionId, extractStep);
-          emit("step", extractStep);
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: `Recorded extract ${id}.`,
-          });
-        }
       }
       messages.push({ role: "user", content: toolResults });
     }
 
-    const codeBlocks = parseCodeBlocks(fullText, extractsById);
+    // Emit sources step with all fetched URLs
+    if (fetchedUrls.length > 0) {
+      const sourcesStep: SourcesStep = {
+        type: "sources",
+        urls: [...new Set(fetchedUrls)],
+        timestamp: new Date().toISOString(),
+      };
+      await appendTraceStep(sessionId, sourcesStep);
+      emit("step", sourcesStep);
+    }
+
+    const codeBlocks = parseCodeBlocks(fullText);
 
     await db
       .update(sessions)
