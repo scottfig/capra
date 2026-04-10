@@ -2,7 +2,7 @@
 
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import type { CodeBlock, ExtractStep } from "@/lib/agent/types";
+import type { CodeBlock } from "@/lib/agent/types";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -23,38 +23,35 @@ function formatBlockLabel(block: CodeBlock): string {
   return block.language || "code";
 }
 
-function SourceCard({ extract, dot }: { extract: ExtractStep; dot: string }) {
-  let pathLabel = extract.url;
+function SourceCard({ url, excerpt, dot }: { url: string; excerpt?: string; dot: string }) {
+  let pathLabel = url;
   try {
-    const parsed = new URL(extract.url);
+    const parsed = new URL(url);
     pathLabel = parsed.pathname === "/" ? parsed.hostname : parsed.pathname;
   } catch {
     // keep full URL
   }
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-1.5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="w-2 h-2 rounded-full shrink-0"
-            style={{ backgroundColor: dot }}
-          />
-          <span className="text-xs font-semibold text-zinc-200 leading-snug truncate">
-            {extract.section_title}
-          </span>
-        </div>
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: dot }}
+        />
         <a
-          href={extract.url}
+          href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-xs text-blue-500 hover:text-blue-400 font-mono shrink-0 underline underline-offset-2"
+          className="text-xs text-blue-400 hover:text-blue-300 font-mono truncate underline underline-offset-2"
         >
           {pathLabel}
         </a>
       </div>
-      <blockquote className="border-l-2 border-zinc-700 pl-2.5 text-xs text-zinc-400 leading-relaxed italic">
-        {extract.excerpt}
-      </blockquote>
+      {excerpt && (
+        <blockquote className="border-l-2 border-zinc-700 pl-2.5 text-xs text-zinc-400 leading-relaxed italic whitespace-pre-wrap">
+          {excerpt}
+        </blockquote>
+      )}
     </div>
   );
 }
@@ -62,7 +59,8 @@ function SourceCard({ extract, dot }: { extract: ExtractStep; dot: string }) {
 export default function CodeOutput({ blocks, showHighlights }: Props) {
   const [copied, setCopied] = useState<number | null>(null);
   const [activeEntry, setActiveEntry] = useState<{
-    extractId: string;
+    sourceUrl: string;
+    excerpt?: string;
     blockIndex: number;
     colorIndex: number;
   } | null>(null);
@@ -86,29 +84,25 @@ export default function CodeOutput({ blocks, showHighlights }: Props) {
       {blocks.map((block, i) => {
         const hasRanges = block.sourceRanges && block.sourceRanges.length > 0;
 
-        // Assign palette color to each unique extractId in order of first appearance
-        const extractColorIndex = new Map<string, number>();
+        // Assign palette color to each unique sourceUrl in order of first appearance
+        const urlColorIndex = new Map<string, number>();
         for (const r of block.sourceRanges ?? []) {
-          if (!extractColorIndex.has(r.extractId)) {
-            extractColorIndex.set(r.extractId, extractColorIndex.size % PALETTE.length);
+          if (!urlColorIndex.has(r.sourceUrl)) {
+            urlColorIndex.set(r.sourceUrl, urlColorIndex.size % PALETTE.length);
           }
         }
 
-        // Build line → { extractId, colorIndex } lookup
-        const lineMap = new Map<number, { extractId: string; colorIndex: number }>();
+        // Build line → { sourceUrl, excerpt, colorIndex } lookup
+        const lineMap = new Map<number, { sourceUrl: string; excerpt?: string; colorIndex: number }>();
         for (const r of block.sourceRanges ?? []) {
-          const ci = extractColorIndex.get(r.extractId)!;
+          const ci = urlColorIndex.get(r.sourceUrl)!;
           for (let ln = r.start; ln <= r.end; ln++) {
-            lineMap.set(ln, { extractId: r.extractId, colorIndex: ci });
+            lineMap.set(ln, { sourceUrl: r.sourceUrl, excerpt: r.excerpt, colorIndex: ci });
           }
         }
 
-        const extractsMap = new Map(block.extracts?.map((e) => [e.id, e]) ?? []);
         const activeForThisBlock =
           activeEntry?.blockIndex === i ? activeEntry : null;
-        const activeExtract = activeForThisBlock
-          ? extractsMap.get(activeForThisBlock.extractId)
-          : null;
 
         return (
           <div
@@ -147,7 +141,7 @@ export default function CodeOutput({ blocks, showHighlights }: Props) {
                 if (!entry || !showHighlights) return { style: { display: "block" } };
                 const palette = PALETTE[entry.colorIndex];
                 const isActive =
-                  activeForThisBlock?.extractId === entry.extractId;
+                  activeForThisBlock?.sourceUrl === entry.sourceUrl;
                 return {
                   style: {
                     display: "block",
@@ -161,7 +155,8 @@ export default function CodeOutput({ blocks, showHighlights }: Props) {
                       isActive
                         ? null
                         : {
-                            extractId: entry.extractId,
+                            sourceUrl: entry.sourceUrl,
+                            excerpt: entry.excerpt,
                             blockIndex: i,
                             colorIndex: entry.colorIndex,
                           }
@@ -179,7 +174,7 @@ export default function CodeOutput({ blocks, showHighlights }: Props) {
             </SyntaxHighlighter>
 
             {/* Source panel for the active (clicked) range */}
-            {showHighlights && activeExtract && activeForThisBlock && (
+            {showHighlights && activeForThisBlock && (
               <div className="border-t border-zinc-700/60 bg-zinc-900/40 p-3 space-y-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -193,7 +188,8 @@ export default function CodeOutput({ blocks, showHighlights }: Props) {
                   </button>
                 </div>
                 <SourceCard
-                  extract={activeExtract}
+                  url={activeForThisBlock.sourceUrl}
+                  excerpt={activeForThisBlock.excerpt}
                   dot={PALETTE[activeForThisBlock.colorIndex].dot}
                 />
               </div>
